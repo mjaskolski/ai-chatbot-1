@@ -1,0 +1,283 @@
+---
+globs: "components/**/*.tsx,app/**/*.tsx"
+---
+# React Component Patterns
+
+## Component File Structure
+
+### Basic Component Template
+```typescript
+'use client'; // Only if needed
+
+import { cn } from '@/lib/utils';
+import type { ComponentProps } from '@/lib/types';
+
+interface MyComponentProps {
+  children?: React.ReactNode;
+  className?: string;
+  variant?: 'default' | 'secondary';
+  onAction?: () => void;
+}
+
+export function MyComponent({
+  children,
+  className,
+  variant = 'default',
+  onAction,
+}: MyComponentProps) {
+  return (
+    <div
+      className={cn(
+        'base-styles',
+        {
+          'variant-default': variant === 'default',
+          'variant-secondary': variant === 'secondary',
+        },
+        className
+      )}
+      onClick={onAction}
+    >
+      {children}
+    </div>
+  );
+}
+```
+
+## UI Component Patterns (shadcn/ui)
+
+### Extending UI Components
+```typescript
+import { Button, type ButtonProps } from '@/components/ui/button';
+import { forwardRef } from 'react';
+
+interface CustomButtonProps extends ButtonProps {
+  loading?: boolean;
+}
+
+export const CustomButton = forwardRef<HTMLButtonElement, CustomButtonProps>(
+  ({ loading, children, disabled, ...props }, ref) => {
+    return (
+      <Button
+        ref={ref}
+        disabled={disabled || loading}
+        {...props}
+      >
+        {loading ? <Spinner /> : children}
+      </Button>
+    );
+  }
+);
+
+CustomButton.displayName = 'CustomButton';
+```
+
+### Form Components
+```typescript
+'use client';
+
+import { useFormStatus } from 'react-dom';
+import { Button } from '@/components/ui/button';
+
+export function SubmitButton({ children }: { children: React.ReactNode }) {
+  const { pending } = useFormStatus();
+  
+  return (
+    <Button type="submit" disabled={pending}>
+      {pending ? 'Loading...' : children}
+    </Button>
+  );
+}
+```
+
+## State Management Patterns
+
+### Local State with useReducer
+```typescript
+interface State {
+  count: number;
+  loading: boolean;
+}
+
+type Action = 
+  | { type: 'increment' }
+  | { type: 'setLoading'; payload: boolean };
+
+function reducer(state: State, action: Action): State {
+  switch (action.type) {
+    case 'increment':
+      return { ...state, count: state.count + 1 };
+    case 'setLoading':
+      return { ...state, loading: action.payload };
+    default:
+      return state;
+  }
+}
+
+export function Counter() {
+  const [state, dispatch] = useReducer(reducer, {
+    count: 0,
+    loading: false,
+  });
+  
+  return (
+    <button onClick={() => dispatch({ type: 'increment' })}>
+      Count: {state.count}
+    </button>
+  );
+}
+```
+
+### Context Pattern
+```typescript
+'use client';
+
+import { createContext, useContext, type ReactNode } from 'react';
+
+interface ThemeContextType {
+  theme: 'light' | 'dark';
+  toggleTheme: () => void;
+}
+
+const ThemeContext = createContext<ThemeContextType | undefined>(undefined);
+
+export function ThemeProvider({ children }: { children: ReactNode }) {
+  const [theme, setTheme] = useState<'light' | 'dark'>('light');
+  
+  const toggleTheme = () => {
+    setTheme(prev => prev === 'light' ? 'dark' : 'light');
+  };
+  
+  return (
+    <ThemeContext.Provider value={{ theme, toggleTheme }}>
+      {children}
+    </ThemeContext.Provider>
+  );
+}
+
+export function useTheme() {
+  const context = useContext(ThemeContext);
+  if (!context) {
+    throw new Error('useTheme must be used within ThemeProvider');
+  }
+  return context;
+}
+```
+
+## Data Fetching Patterns
+
+### Server Component Data Fetching
+```typescript
+async function UserList() {
+  const users = await fetchUsers();
+  
+  return (
+    <ul>
+      {users.map(user => (
+        <li key={user.id}>{user.name}</li>
+      ))}
+    </ul>
+  );
+}
+```
+
+### Client Component with Server Action
+```typescript
+'use client';
+
+import { useOptimistic } from 'react';
+import { deleteUser } from '@/app/actions';
+
+export function UserItem({ user }: { user: User }) {
+  const [optimisticUser, setOptimisticUser] = useOptimistic(
+    user,
+    (state, deleted: boolean) => ({ ...state, deleted })
+  );
+  
+  async function handleDelete() {
+    setOptimisticUser(true);
+    await deleteUser(user.id);
+  }
+  
+  if (optimisticUser.deleted) {
+    return <div className="opacity-50">Deleting...</div>;
+  }
+  
+  return (
+    <div>
+      {user.name}
+      <button onClick={handleDelete}>Delete</button>
+    </div>
+  );
+}
+```
+
+## Performance Patterns
+
+### Memo with Custom Comparison
+```typescript
+import { memo } from 'react';
+
+interface ExpensiveComponentProps {
+  data: ComplexData;
+  onUpdate: (id: string) => void;
+}
+
+export const ExpensiveComponent = memo(
+  function ExpensiveComponent({ data, onUpdate }: ExpensiveComponentProps) {
+    const processed = expensiveComputation(data);
+    
+    return <div>{processed}</div>;
+  },
+  (prevProps, nextProps) => {
+    // Custom comparison
+    return prevProps.data.id === nextProps.data.id &&
+           prevProps.data.version === nextProps.data.version;
+  }
+);
+```
+
+### Dynamic Imports
+```typescript
+import dynamic from 'next/dynamic';
+
+const HeavyComponent = dynamic(
+  () => import('./heavy-component'),
+  {
+    loading: () => <Skeleton />,
+    ssr: false, // Disable SSR if needed
+  }
+);
+```
+
+## Accessibility Patterns
+```typescript
+export function AccessibleButton({ label, ...props }: ButtonProps) {
+  return (
+    <button
+      aria-label={label}
+      role="button"
+      tabIndex={0}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          props.onClick?.(e);
+        }
+      }}
+      {...props}
+    />
+  );
+}
+```
+
+## Best Practices
+
+1. **Prefer Server Components** - Use Client Components only when necessary
+2. **Colocate related code** - Keep styles, types, and logic close
+3. **Use TypeScript strictly** - Define all prop types
+4. **Handle loading and error states** - Always consider edge cases
+5. **Optimize re-renders** - Use memo/useMemo/useCallback wisely
+6. **Follow accessibility guidelines** - ARIA labels, keyboard navigation
+7. **Use semantic HTML** - Proper heading hierarchy, landmarks
+8. **Implement proper error boundaries** - Catch and handle errors gracefully
+ 9. **Test components thoroughly** - Unit and integration tests
+ 10. **Document complex components** - Add JSDoc comments for clarity

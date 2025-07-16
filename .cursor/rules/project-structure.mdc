@@ -1,0 +1,53 @@
+---
+alwaysApply: true
+---
+# AI Chatbot Project Structure
+
+## Overview
+This is a Next.js 14+ application with AI chat capabilities, featuring real-time streaming, authentication, and artifact management.
+
+## Key Entry Points
+- Main application layout: [app/layout.tsx](mdc:app/layout.tsx)
+- Chat interface: [app/(chat)/page.tsx](mdc:app/(chat)/page.tsx)
+- Authentication: [app/(auth)/auth.ts](mdc:app/(auth)/auth.ts)
+
+## Core Features
+
+### AI Integration
+- Chat API endpoint: [app/(chat)/api/chat/route.ts](mdc:app/(chat)/api/chat/route.ts)
+- AI models configuration: [lib/ai/models.ts](mdc:lib/ai/models.ts)
+- AI providers: [lib/ai/providers.ts](mdc:lib/ai/providers.ts)
+- Custom tools: [lib/ai/tools/](mdc:lib/ai/tools/)
+
+### Database
+- Schema definitions: [lib/db/schema.ts](mdc:lib/db/schema.ts)
+- Query helpers: [lib/db/queries.ts](mdc:lib/db/queries.ts)
+- Migrations: [lib/db/migrations/](mdc:lib/db/migrations/)
+- Uses Drizzle ORM with PostgreSQL
+
+### Components
+- UI components: [components/ui/](mdc:components/ui/) (shadcn/ui based)
+- Chat components: [components/chat.tsx](mdc:components/chat.tsx), [components/messages.tsx](mdc:components/messages.tsx)
+- Artifact system: [components/artifact.tsx](mdc:components/artifact.tsx), [artifacts/](mdc:artifacts/)
+
+### Authentication
+- NextAuth configuration: [app/(auth)/auth.config.ts](mdc:app/(auth)/auth.config.ts)
+- Auth routes: [app/(auth)/api/auth/[...nextauth]/route.ts](mdc:app/(auth)/api/auth/[...nextauth]/route.ts)
+
+## Tech Stack
+- Framework: Next.js 14+ with App Router
+- Language: TypeScript
+- Styling: Tailwind CSS
+- UI Library: shadcn/ui
+- Database: PostgreSQL with Drizzle ORM
+- AI: Vercel AI SDK
+- Authentication: NextAuth.js
+- Testing: Playwright
+- Linting: Biome
+
+## Important Patterns
+1. Server Components by default, Client Components when needed
+2. Server Actions for mutations in [app/(chat)/actions.ts](mdc:app/(chat)/actions.ts)
+3. Route handlers for streaming responses
+4. Data streaming with React Server Components
+5. Artifact system for code/image/text/sheet editing

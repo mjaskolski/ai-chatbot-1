@@ -1,0 +1,349 @@
+---
+description: "Guide for implementing AI chat features, streaming responses, and tool usage"
+---
+# AI Chat Implementation Guide
+
+## Setting Up AI Chat
+
+### Model Configuration
+Reference: [lib/ai/models.ts](mdc:lib/ai/models.ts)
+
+```typescript
+import { openai } from '@ai-sdk/openai';
+import { anthropic } from '@ai-sdk/anthropic';
+
+// Define available models
+export const models = [
+  { id: 'gpt-4-turbo', provider: 'openai', name: 'GPT-4 Turbo' },
+  { id: 'claude-3-opus', provider: 'anthropic', name: 'Claude 3 Opus' },
+];
+
+// Model selection based on user preference
+export function getModel(modelId: string) {
+  const model = models.find(m => m.id === modelId);
+  if (!model) throw new Error('Model not found');
+  
+  switch (model.provider) {
+    case 'openai':
+      return openai(model.id);
+    case 'anthropic':
+      return anthropic(model.id);
+  }
+}
+```
+
+### Streaming Chat Implementation
+Reference: [app/(chat)/api/chat/route.ts](mdc:app/(chat)/api/chat/route.ts)
+
+```typescript
+import { streamText } from 'ai';
+import { createDataStreamResponse } from '@ai-sdk/ui-utils';
+
+export async function POST(request: Request) {
+  const { messages, modelId } = await request.json();
+  
+  // Get authenticated user
+  const session = await auth();
+  if (!session?.user) {
+    return new Response('Unauthorized', { status: 401 });
+  }
+  
+  // Create or get chat
+  const chatId = request.headers.get('x-chat-id') || nanoid();
+  
+  // Stream response
+  const result = await streamText({
+    model: getModel(modelId),
+    messages,
+    system: 'You are a helpful AI assistant.',
+    maxTokens: 4096,
+    temperature: 0.7,
+    tools: {
+      getWeather: weatherTool,
+      createDocument: documentTool,
+    },
+    onFinish: async ({ text, usage }) => {
+      // Save to database
+      await saveMessage({
+        chatId,
+        role: 'assistant',
+        content: text,
+        usage,
+      });
+    },
+  });
+  
+  return result.toDataStreamResponse({
+    headers: {
+      'x-chat-id': chatId,
+    },
+  });
+}
+```
+
+### Client-Side Chat Hook
+Reference: [hooks/use-chat.tsx](mdc:hooks/use-chat.tsx)
+
+```typescript
+'use client';
+
+import { useChat as useAIChat } from 'ai/react';
+import { useRouter } from 'next/navigation';
+
+export function useChat({ initialMessages }) {
+  const router = useRouter();
+  
+  const {
+    messages,
+    input,
+    handleInputChange,
+    handleSubmit,
+    isLoading,
+    error,
+    reload,
+    append,
+  } = useAIChat({
+    api: '/api/chat',
+    initialMessages,
+    headers: {
+      'x-chat-id': chatId,
+    },
+    onResponse: (response) => {
+      const chatId = response.headers.get('x-chat-id');
+      if (chatId) {
+        router.push(`/chat/${chatId}`);
+      }
+    },
+    onError: (error) => {
+      toast.error('Failed to send message');
+      console.error('Chat error:', error);
+    },
+  });
+  
+  return {
+    messages,
+    input,
+    handleInputChange,
+    handleSubmit,
+    isLoading,
+    error,
+    reload,
+    append,
+  };
+}
+```
+
+## Implementing AI Tools
+
+### Tool Definition
+Reference: [lib/ai/tools/get-weather.ts](mdc:lib/ai/tools/get-weather.ts)
+
+```typescript
+import { z } from 'zod';
+import { tool } from 'ai';
+
+export const getWeatherTool = tool({
+  description: 'Get current weather for a location',
+  parameters: z.object({
+    location: z.string().describe('City name or coordinates'),
+    unit: z.enum(['celsius', 'fahrenheit']).default('celsius'),
+  }),
+  execute: async ({ location, unit }) => {
+    // Fetch weather data
+    const weather = await fetchWeatherAPI(location);
+    
+    return {
+      temperature: convertUnit(weather.temp, unit),
+      condition: weather.condition,
+      humidity: weather.humidity,
+    };
+  },
+});
+```
+
+### Document Creation Tool
+Reference: [lib/ai/tools/create-document.ts](mdc:lib/ai/tools/create-document.ts)
+
+```typescript
+export const createDocumentTool = tool({
+  description: 'Create a new document with content',
+  parameters: z.object({
+    title: z.string(),
+    content: z.string(),
+    type: z.enum(['markdown', 'code', 'text']),
+  }),
+  execute: async ({ title, content, type }) => {
+    const document = await db.insert(documents).values({
+      title,
+      content,
+      type,
+      userId: session.user.id,
+    }).returning();
+    
+    return {
+      documentId: document[0].id,
+      url: `/documents/${document[0].id}`,
+    };
+  },
+});
+```
+
+## Handling Message Types
+
+### System Messages
+```typescript
+interface SystemMessage {
+  role: 'system';
+  content: string;
+}
+
+// Add context-aware system prompts
+const systemPrompt = `You are an AI assistant for a coding platform.
+You can help with:
+- Writing and reviewing code
+- Creating documents
+- Answering technical questions
+- Providing weather information
+
+Always be helpful, accurate, and concise.`;
+```
+
+### Multi-Modal Messages
+```typescript
+interface MultiModalMessage {
+  role: 'user' | 'assistant';
+  content: string | Array<{
+    type: 'text' | 'image';
+    text?: string;
+    image?: string; // base64 or URL
+  }>;
+}
+
+// Handle image uploads
+export async function processImageMessage(file: File) {
+  const base64 = await fileToBase64(file);
+  
+  return {
+    role: 'user',
+    content: [
+      {
+        type: 'text',
+        text: 'What is in this image?',
+      },
+      {
+        type: 'image',
+        image: base64,
+      },
+    ],
+  };
+}
+```
+
+## Artifact System
+
+### Creating Artifacts
+Reference: [artifacts/actions.ts](mdc:artifacts/actions.ts)
+
+```typescript
+export async function createArtifact(data: {
+  type: 'code' | 'image' | 'text' | 'sheet';
+  content: any;
+  title: string;
+  messageId: string;
+}) {
+  const artifact = await db.insert(artifacts).values({
+    ...data,
+    userId: session.user.id,
+    version: 1,
+  }).returning();
+  
+  // Return appropriate response based on type
+  switch (data.type) {
+    case 'code':
+      return { 
+        component: 'CodeEditor',
+        props: { content: data.content, language: 'typescript' },
+      };
+    case 'image':
+      return {
+        component: 'ImageEditor',
+        props: { src: data.content },
+      };
+    // ... other types
+  }
+}
+```
+
+## Best Practices
+
+### Error Handling
+```typescript
+try {
+  const response = await streamText({ /* ... */ });
+  return response.toDataStreamResponse();
+} catch (error) {
+  if (error.code === 'rate_limit_exceeded') {
+    return new Response('Rate limit exceeded', { status: 429 });
+  }
+  
+  if (error.code === 'invalid_api_key') {
+    return new Response('Invalid API configuration', { status: 500 });
+  }
+  
+  // Log unexpected errors
+  console.error('Chat API error:', error);
+  return new Response('Internal server error', { status: 500 });
+}
+```
+
+### Token Usage Tracking
+```typescript
+// Track usage per user
+export async function trackUsage(userId: string, usage: {
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+}) {
+  await db.insert(tokenUsage).values({
+    userId,
+    ...usage,
+    timestamp: new Date(),
+  });
+  
+  // Check limits
+  const monthlyUsage = await getMonthlyUsage(userId);
+  if (monthlyUsage > USER_TOKEN_LIMIT) {
+    throw new Error('Monthly token limit exceeded');
+  }
+}
+```
+
+### Response Caching
+```typescript
+// Cache frequent queries
+import { unstable_cache } from 'next/cache';
+
+export const getCachedResponse = unstable_cache(
+  async (prompt: string) => {
+    return await generateResponse(prompt);
+  },
+  ['ai-response'],
+  {
+    revalidate: 3600, // 1 hour
+    tags: ['ai-cache'],
+  }
+);
+```
+
+## Performance Optimization
+
+1. **Stream responses** for better UX
+2. **Implement rate limiting** to prevent abuse
+3. **Cache common responses** when appropriate
+4. **Use edge functions** for faster response times
+5. **Optimize token usage** with smart prompting
+6. **Implement request queuing** for high load
+7. **Monitor API costs** and usage patterns
+8. **Use websockets** for real-time features
+ 9. **Implement retry logic** with exponential backoff
+ 10. **Profile and optimize** database queries

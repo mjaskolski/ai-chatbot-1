@@ -1,0 +1,211 @@
+---
+globs: "lib/db/**/*.ts,app/**/queries.ts"
+---
+# Database Patterns with Drizzle ORM
+
+## Schema Definition
+
+### Table Definition Pattern
+```typescript
+import { pgTable, text, timestamp, uuid, integer, boolean } from 'drizzle-orm/pg-core';
+
+export const users = pgTable('users', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  email: text('email').notNull().unique(),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+  updatedAt: timestamp('updated_at').defaultNow().notNull(),
+});
+
+// Relations
+export const usersRelations = relations(users, ({ many }) => ({
+  chats: many(chats),
+}));
+```
+
+### Type Inference
+```typescript
+import { InferSelectModel, InferInsertModel } from 'drizzle-orm';
+
+// Automatically infer types from schema
+export type User = InferSelectModel<typeof users>;
+export type NewUser = InferInsertModel<typeof users>;
+```
+
+## Query Patterns
+
+### Basic Queries
+```typescript
+import { db } from '@/lib/db';
+import { eq, desc, and, or } from 'drizzle-orm';
+
+// Select with conditions
+export async function getUserById(id: string) {
+  const [user] = await db
+    .select()
+    .from(users)
+    .where(eq(users.id, id))
+    .limit(1);
+  
+  return user;
+}
+
+// Insert with returning
+export async function createUser(data: NewUser) {
+  const [user] = await db
+    .insert(users)
+    .values(data)
+    .returning();
+  
+  return user;
+}
+
+// Update
+export async function updateUser(id: string, data: Partial<User>) {
+  const [updated] = await db
+    .update(users)
+    .set({
+      ...data,
+      updatedAt: new Date(),
+    })
+    .where(eq(users.id, id))
+    .returning();
+  
+  return updated;
+}
+
+// Delete
+export async function deleteUser(id: string) {
+  await db
+    .delete(users)
+    .where(eq(users.id, id));
+}
+```
+
+### Complex Queries with Joins
+```typescript
+// Left join with relations
+export async function getUserWithChats(userId: string) {
+  const result = await db
+    .select({
+      user: users,
+      chat: chats,
+    })
+    .from(users)
+    .leftJoin(chats, eq(users.id, chats.userId))
+    .where(eq(users.id, userId));
+  
+  // Group results
+  const user = result[0]?.user;
+  const userChats = result
+    .filter(row => row.chat)
+    .map(row => row.chat);
+  
+  return { ...user, chats: userChats };
+}
+
+// Using with() for eager loading
+export async function getUserWithRelations(userId: string) {
+  const user = await db.query.users.findFirst({
+    where: eq(users.id, userId),
+    with: {
+      chats: {
+        orderBy: desc(chats.createdAt),
+        limit: 10,
+      },
+    },
+  });
+  
+  return user;
+}
+```
+
+### Transactions
+```typescript
+export async function transferCredits(
+  fromUserId: string,
+  toUserId: string,
+  amount: number
+) {
+  return await db.transaction(async (tx) => {
+    // Deduct from sender
+    await tx
+      .update(users)
+      .set({ credits: sql`${users.credits} - ${amount}` })
+      .where(
+        and(
+          eq(users.id, fromUserId),
+          gte(users.credits, amount)
+        )
+      );
+    
+    // Add to receiver
+    await tx
+      .update(users)
+      .set({ credits: sql`${users.credits} + ${amount}` })
+      .where(eq(users.id, toUserId));
+    
+    // Log transaction
+    await tx.insert(transactions).values({
+      fromUserId,
+      toUserId,
+      amount,
+    });
+  });
+}
+```
+
+## Migration Patterns
+
+### Creating Migrations
+```typescript
+// lib/db/migrations/0001_add_user_role.sql
+ALTER TABLE users ADD COLUMN role text DEFAULT 'user';
+
+-- Update schema file accordingly
+export const users = pgTable('users', {
+  // ... existing columns
+  role: text('role').default('user'),
+});
+```
+
+### Running Migrations
+```bash
+# Generate migration
+pnpm drizzle-kit generate:pg
+
+# Push to database
+pnpm drizzle-kit push:pg
+
+# Run migrations
+pnpm tsx lib/db/migrate.ts
+```
+
+## Best Practices
+
+1. **Always use prepared statements** - Drizzle handles this automatically
+2. **Use transactions for multiple operations** that should succeed/fail together
+3. **Index foreign keys and frequently queried columns**
+4. **Use proper types** - Let TypeScript infer from schema
+5. **Handle errors gracefully** - Database operations can fail
+6. **Use migrations for schema changes** - Never modify production directly
+7. **Validate data before inserting** - Use Zod schemas
+8. **Use `.returning()` to get inserted/updated data**
+9. **Optimize queries** - Select only needed columns
+10. **Use database constraints** - Enforce data integrity at DB level
+
+## Error Handling
+```typescript
+import { PostgresError } from 'postgres';
+
+try {
+  await createUser(data);
+} catch (error) {
+  if (error instanceof PostgresError) {
+    if (error.code === '23505') {
+      // Unique constraint violation
+      throw new Error('User already exists');
+    }
+  }
+  throw error;
+}
+```

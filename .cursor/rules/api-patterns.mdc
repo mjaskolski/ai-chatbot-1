@@ -1,0 +1,189 @@
+---
+globs: "app/**/route.ts,app/**/actions.ts,artifacts/actions.ts"
+---
+# API & Server Action Patterns
+
+## Route Handlers (route.ts)
+
+### Structure Template
+```typescript
+import { NextRequest, NextResponse } from 'next/server';
+import { z } from 'zod';
+import { auth } from '@/app/(auth)/auth';
+
+// Define request schema
+const requestSchema = z.object({
+  field: z.string(),
+});
+
+export async function GET(request: NextRequest) {
+  try {
+    // Authentication check
+    const session = await auth();
+    if (!session?.user) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
+    // Handle request
+    const data = await fetchData();
+    return NextResponse.json(data);
+  } catch (error) {
+    console.error('API Error:', error);
+    return NextResponse.json(
+      { error: 'Internal Server Error' },
+      { status: 500 }
+    );
+  }
+}
+
+export async function POST(request: NextRequest) {
+  try {
+    // Parse and validate body
+    const body = await request.json();
+    const validated = requestSchema.parse(body);
+
+    // Process request
+    const result = await processData(validated);
+    return NextResponse.json(result);
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      return NextResponse.json(
+        { error: 'Invalid request data', details: error.errors },
+        { status: 400 }
+      );
+    }
+    return NextResponse.json(
+      { error: 'Internal Server Error' },
+      { status: 500 }
+    );
+  }
+}
+```
+
+### Streaming Responses
+```typescript
+import { streamText } from 'ai';
+
+export async function POST(request: NextRequest) {
+  const stream = await streamText({
+    model: openai('gpt-4'),
+    messages,
+  });
+
+  return stream.toDataStreamResponse();
+}
+```
+
+## Server Actions (actions.ts)
+
+### Basic Pattern
+```typescript
+'use server';
+
+import { revalidatePath } from 'next/cache';
+import { redirect } from 'next/navigation';
+import { z } from 'zod';
+import { auth } from '@/app/(auth)/auth';
+
+const actionSchema = z.object({
+  field: z.string().min(1),
+});
+
+export async function serverAction(formData: FormData) {
+  // Authentication
+  const session = await auth();
+  if (!session?.user) {
+    throw new Error('Unauthorized');
+  }
+
+  // Validation
+  const validated = actionSchema.parse({
+    field: formData.get('field'),
+  });
+
+  try {
+    // Perform action
+    await performDatabaseOperation(validated);
+    
+    // Revalidate cache
+    revalidatePath('/path');
+    
+    // Optionally redirect
+    redirect('/success');
+  } catch (error) {
+    // Return error to be handled by client
+    return {
+      error: error instanceof Error ? error.message : 'Action failed',
+    };
+  }
+}
+```
+
+### Form Actions
+```typescript
+export async function createItem(formData: FormData) {
+  const result = await serverAction(formData);
+  
+  if (result?.error) {
+    // Handle error in form
+    return { error: result.error };
+  }
+  
+  // Success - will redirect
+}
+```
+
+## Error Handling
+
+### Consistent Error Response
+```typescript
+interface ErrorResponse {
+  error: string;
+  details?: unknown;
+  code?: string;
+}
+
+function createErrorResponse(
+  message: string,
+  status: number,
+  details?: unknown
+): NextResponse {
+  return NextResponse.json(
+    { error: message, details },
+    { status }
+  );
+}
+```
+
+### Rate Limiting
+```typescript
+import { rateLimit } from '@/lib/rate-limit';
+
+export async function POST(request: NextRequest) {
+  const identifier = request.ip ?? 'anonymous';
+  const { success } = await rateLimit.limit(identifier);
+  
+  if (!success) {
+    return NextResponse.json(
+      { error: 'Too many requests' },
+      { status: 429 }
+    );
+  }
+  
+  // Continue processing
+}
+```
+
+## Best Practices
+
+1. **Always validate input** - Use Zod schemas
+2. **Handle authentication** - Check session/user
+3. **Return consistent errors** - Use standard error format
+4. **Use proper HTTP status codes**
+5. **Log errors for debugging** - But don't expose internals
+6. **Implement rate limiting** for public endpoints
+7. **Use streaming for AI responses**
+8. **Revalidate paths** after mutations
+9. **Handle both success and error cases**
+10. **Use TypeScript for type safety**
+

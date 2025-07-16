@@ -1,0 +1,124 @@
+---
+globs: "*.ts,*.tsx,*.js,*.jsx"
+---
+# TypeScript & React Coding Standards
+
+## TypeScript Guidelines
+
+### Type Safety
+- Always use strict TypeScript configuration
+- Avoid `any` type - use `unknown` if type is truly unknown
+- Define explicit return types for functions
+- Use interfaces for object shapes, types for unions/primitives
+- Prefer const assertions for literal types
+
+### Import Organization
+```typescript
+// 1. External dependencies
+import { useState, useEffect } from 'react';
+import { z } from 'zod';
+
+// 2. Internal absolute imports
+import { auth } from '@/app/(auth)/auth';
+
+// 3. Internal relative imports
+import { Button } from './ui/button';
+
+// 4. Type imports
+import type { User, Chat } from '@/lib/types';
+```
+
+## React Patterns
+
+### Component Structure
+```typescript
+// Prefer function declarations for components
+export function ComponentName({ prop1, prop2 }: ComponentProps) {
+  // Hooks at the top
+  const [state, setState] = useState();
+  
+  // Derived state
+  const derivedValue = useMemo(() => {}, []);
+  
+  // Effects
+  useEffect(() => {}, []);
+  
+  // Event handlers
+  const handleClick = () => {};
+  
+  // Render
+  return <div>...</div>;
+}
+```
+
+### Server vs Client Components
+- Default to Server Components
+- Use `'use client'` only when needed:
+  - Interactive elements (onClick, onChange)
+  - Browser APIs (localStorage, window)
+  - React hooks (useState, useEffect)
+  - Third-party client libraries
+
+### Props Patterns
+```typescript
+// Define props interface explicitly
+interface ComponentProps {
+  children: React.ReactNode;
+  className?: string;
+  onAction?: (data: ActionData) => void;
+}
+
+// Use object destructuring with defaults
+export function Component({ 
+  children, 
+  className = '', 
+  onAction 
+}: ComponentProps) {}
+```
+
+## Async Patterns
+
+### Server Components
+```typescript
+// Async components are allowed
+export async function ServerComponent() {
+  const data = await fetchData();
+  return <div>{data}</div>;
+}
+```
+
+### Server Actions
+```typescript
+'use server';
+
+export async function serverAction(formData: FormData) {
+  // Validate input
+  const validated = schema.parse(formData);
+  
+  // Perform action
+  try {
+    await performDatabaseOperation();
+    revalidatePath('/path');
+  } catch (error) {
+    throw new Error('Action failed');
+  }
+}
+```
+
+## Error Handling
+- Use try-catch blocks for async operations
+- Provide meaningful error messages
+- Use Error Boundaries for React components
+- Validate inputs with Zod schemas
+
+## Performance
+- Use React.memo sparingly and only when proven necessary
+- Prefer useMemo/useCallback for expensive computations
+- Lazy load components with dynamic imports
+- Optimize images with next/image
+
+## Styling
+- Use Tailwind CSS classes
+- Leverage cn() utility for conditional classes
+- Follow mobile-first responsive design
+- Use CSS variables for theming

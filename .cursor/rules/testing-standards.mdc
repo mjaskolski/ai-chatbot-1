@@ -1,0 +1,279 @@
+---
+globs: "tests/**/*.ts,tests/**/*.test.ts,**/*.test.ts,**/*.test.tsx"
+---
+# Testing Standards with Playwright
+
+## E2E Test Structure
+
+### Basic Test Pattern
+```typescript
+import { test, expect } from '@playwright/test';
+import { AuthPage } from '../pages/auth';
+import { ChatPage } from '../pages/chat';
+
+test.describe('Chat Feature', () => {
+  let authPage: AuthPage;
+  let chatPage: ChatPage;
+
+  test.beforeEach(async ({ page }) => {
+    authPage = new AuthPage(page);
+    chatPage = new ChatPage(page);
+    
+    // Common setup
+    await page.goto('/');
+  });
+
+  test('should send a message', async ({ page }) => {
+    // Arrange
+    await authPage.loginAsTestUser();
+    
+    // Act
+    await chatPage.sendMessage('Hello, AI!');
+    
+    // Assert
+    await expect(chatPage.lastMessage).toContainText('Hello, AI!');
+    await expect(chatPage.aiResponse).toBeVisible();
+  });
+});
+```
+
+## Page Object Model
+
+### Page Object Pattern
+```typescript
+// tests/pages/chat.ts
+import { Page, Locator } from '@playwright/test';
+
+export class ChatPage {
+  readonly page: Page;
+  readonly messageInput: Locator;
+  readonly sendButton: Locator;
+  readonly messageList: Locator;
+
+  constructor(page: Page) {
+    this.page = page;
+    this.messageInput = page.getByPlaceholder('Send a message...');
+    this.sendButton = page.getByRole('button', { name: 'Send' });
+    this.messageList = page.getByRole('list', { name: 'Messages' });
+  }
+
+  async sendMessage(text: string) {
+    await this.messageInput.fill(text);
+    await this.sendButton.click();
+    
+    // Wait for message to appear
+    await this.page.waitForSelector(
+      `text="${text}"`,
+      { state: 'visible' }
+    );
+  }
+
+  get lastMessage() {
+    return this.messageList.locator('li').last();
+  }
+
+  get aiResponse() {
+    return this.page.locator('[data-role="ai-message"]').last();
+  }
+}
+```
+
+## Test Helpers
+
+### Authentication Helper
+```typescript
+// tests/helpers.ts
+import { Page } from '@playwright/test';
+
+export async function loginAsTestUser(page: Page) {
+  await page.goto('/login');
+  await page.fill('input[name="email"]', 'test@example.com');
+  await page.fill('input[name="password"]', 'testpassword');
+  await page.click('button[type="submit"]');
+  
+  // Wait for redirect
+  await page.waitForURL('/chat');
+}
+
+export async function waitForAIResponse(page: Page) {
+  // Wait for streaming to complete
+  await page.waitForSelector('[data-streaming="false"]', {
+    timeout: 30000,
+  });
+}
+```
+
+### Database Seeding
+```typescript
+// tests/fixtures.ts
+import { test as base } from '@playwright/test';
+import { db } from '@/lib/db';
+
+export const test = base.extend({
+  authenticatedPage: async ({ page }, use) => {
+    // Seed test user
+    const testUser = await db.insert(users).values({
+      email: 'test@example.com',
+      name: 'Test User',
+    }).returning();
+
+    // Create session
+    await page.context().addCookies([{
+      name: 'session',
+      value: 'test-session-token',
+      domain: 'localhost',
+      path: '/',
+    }]);
+
+    await use(page);
+
+    // Cleanup
+    await db.delete(users).where(eq(users.id, testUser[0].id));
+  },
+});
+```
+
+## Testing Patterns
+
+### Testing Streaming Responses
+```typescript
+test('should stream AI response', async ({ page }) => {
+  await chatPage.sendMessage('Tell me a story');
+  
+  // Check streaming indicator
+  await expect(page.locator('[data-streaming="true"]')).toBeVisible();
+  
+  // Wait for first chunk
+  await expect(chatPage.aiResponse).toContainText(/.+/, {
+    timeout: 5000,
+  });
+  
+  // Wait for completion
+  await waitForAIResponse(page);
+  
+  // Verify complete response
+  await expect(chatPage.aiResponse).toContainText(/Once upon a time/i);
+});
+```
+
+### Testing Error States
+```typescript
+test('should handle network errors gracefully', async ({ page, context }) => {
+  // Block API calls
+  await context.route('**/api/chat', route => route.abort());
+  
+  await chatPage.sendMessage('Hello');
+  
+  // Check error message
+  await expect(page.getByText('Failed to send message')).toBeVisible();
+  
+  // Verify retry button
+  await expect(page.getByRole('button', { name: 'Retry' })).toBeEnabled();
+});
+```
+
+### Testing File Uploads
+```typescript
+test('should upload and process image', async ({ page }) => {
+  const fileInput = page.locator('input[type="file"]');
+  
+  // Upload file
+  await fileInput.setInputFiles('tests/fixtures/test-image.png');
+  
+  // Wait for preview
+  await expect(page.locator('img[alt="Upload preview"]')).toBeVisible();
+  
+  // Submit with image
+  await chatPage.sendMessage('What is in this image?');
+  
+  // Verify AI analyzes image
+  await expect(chatPage.aiResponse).toContainText(/image|picture|photo/i);
+});
+```
+
+## Performance Testing
+
+### Measuring Response Times
+```typescript
+test('should load chat history quickly', async ({ page }) => {
+  const startTime = Date.now();
+  
+  await page.goto('/chat/existing-chat-id');
+  await page.waitForLoadState('networkidle');
+  
+  const loadTime = Date.now() - startTime;
+  
+  // Assert performance
+  expect(loadTime).toBeLessThan(3000); // 3 seconds
+  
+  // Log for monitoring
+  console.log(`Chat load time: ${loadTime}ms`);
+});
+```
+
+## Accessibility Testing
+
+### ARIA and Keyboard Navigation
+```typescript
+test('should be keyboard navigable', async ({ page }) => {
+  await page.goto('/chat');
+  
+  // Tab to input
+  await page.keyboard.press('Tab');
+  await expect(chatPage.messageInput).toBeFocused();
+  
+  // Type and send with Enter
+  await page.keyboard.type('Keyboard test');
+  await page.keyboard.press('Enter');
+  
+  // Verify sent
+  await expect(chatPage.lastMessage).toContainText('Keyboard test');
+});
+
+test('should have proper ARIA labels', async ({ page }) => {
+  await page.goto('/chat');
+  
+  // Check main regions
+  await expect(page.getByRole('main')).toBeVisible();
+  await expect(page.getByRole('navigation')).toBeVisible();
+  
+  // Check form elements
+  await expect(page.getByLabel('Message input')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Send message' })).toBeVisible();
+});
+```
+
+## Best Practices
+
+1. **Use Page Object Model** - Encapsulate page logic
+2. **Write independent tests** - Each test should run in isolation
+3. **Use meaningful assertions** - Check visible user outcomes
+4. **Handle async operations** - Wait for elements/responses properly
+5. **Test error scenarios** - Network failures, validation errors
+6. **Mock external services** - For predictable tests
+7. **Use fixtures for setup** - Consistent test data
+8. **Run tests in parallel** - Faster CI/CD
+9. **Test accessibility** - Keyboard nav, screen readers
+10. **Monitor performance** - Track load times and regressions
+
+## CI/CD Integration
+```yaml
+# .github/workflows/e2e.yml
+name: E2E Tests
+on: [push, pull_request]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions/setup-node@v3
+      - run: npm ci
+      - run: npx playwright install
+      - run: npm run test:e2e
+      - uses: actions/upload-artifact@v3
+        if: always()
+        with:
+          name: playwright-report
+                    path: playwright-report/
+ ```
